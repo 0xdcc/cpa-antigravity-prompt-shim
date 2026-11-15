@@ -1,0 +1,18 @@
+# Private, same-machine Sub2API deployment template. Python 3.11+.
+[relay]
+listen_host = "127.0.0.1"
+listen_port = 18083
+mode_file = "/etc/cpa-antigravity-prompt-shim/mode"
+rules_file = ""
+# Model names do NOT identify their provider. Never default-match all Claude/GPT.
+# Explicit operator opt-in for configured Sub2API Antigravity aliases, e.g.:
+# model_regex = "^(gemini-|antigravity-)"
+model_regex = "^gemini-"
+log_level = "info"
+max_body_bytes = 16777216
+request_timeout_seconds = 30
+
+[upstream]
+# Point to your local Sub2API loopback listener (e.g. 127.0.0.1:8081 or 127.0.0.1:8080).
+url = "http://127.0.0.1:8081"
+timeout_seconds = 900

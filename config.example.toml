@@ -5,7 +5,7 @@ listen_port = 8327
 mode_file = "/etc/cpa-antigravity-prompt-shim/mode"
 rules_file = ""
 # Model names do NOT identify their provider. Never default-match all Claude/GPT.
-# Explicit operator opt-in for configured CPA aliases, e.g.:
+# Explicit operator opt-in for configured CPA / Sub2API aliases, e.g.:
 # model_regex = "^(gemini-|antigravity-)"
 model_regex = "^gemini-"
 log_level = "info"
@@ -13,5 +13,7 @@ max_body_bytes = 16777216
 request_timeout_seconds = 30
 
 [upstream]
+# CPA default:     http://127.0.0.1:8317
+# Sub2API example: http://127.0.0.1:8081 (or isolated loopback port)
 url = "http://127.0.0.1:8317"
 timeout_seconds = 900

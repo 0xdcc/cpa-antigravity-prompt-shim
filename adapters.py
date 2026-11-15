@@ -6,12 +6,21 @@ import re
 from urllib.parse import unquote, urlsplit
 
 
-NATIVE_PATH = re.compile(r"/v1beta/models/([^/]+):(generateContent|streamGenerateContent)\Z")
+NATIVE_PATH = re.compile(
+    r"^(?:/antigravity)?/v1beta/models/([^/]+):(generateContent|streamGenerateContent)\Z"
+)
 
 
 def route(target: str) -> tuple[str, str | None]:
     path = urlsplit(target).path
-    protocols = {"/v1/chat/completions": "chat", "/v1/messages": "messages", "/v1/responses": "responses"}
+    protocols = {
+        "/v1/chat/completions": "chat",
+        "/chat/completions": "chat",
+        "/v1/messages": "messages",
+        "/antigravity/v1/messages": "messages",
+        "/v1/responses": "responses",
+        "/responses": "responses",
+    }
     if path in protocols:
         return protocols[path], None
     match = NATIVE_PATH.fullmatch(path)
@@ -39,15 +48,18 @@ def _valid_cache_control(cc) -> bool:
     )
 
 
-def text_blocks(value, kind: str, allow_cache: bool = False) -> tuple[list[tuple[str, dict | None]] | None, bool]:
+def text_blocks(
+    value, kind: str | tuple[str, ...], allow_cache: bool = False
+) -> tuple[list[tuple[str, dict | None]] | None, bool]:
     if isinstance(value, str):
         return [(value, None)], False
     if not isinstance(value, list) or not value:
         return None, False
+    kinds = (kind,) if isinstance(kind, str) else kind
     segs, has_cc = [], False
     allowed = {"type", "text", "cache_control"} if allow_cache else {"type", "text"}
     for x in value:
-        if not (isinstance(x, dict) and set(x) <= allowed and x.get("type") == kind and isinstance(x.get("text"), str)):
+        if not (isinstance(x, dict) and set(x) <= allowed and x.get("type") in kinds and isinstance(x.get("text"), str)):
             return None, False
         cc = None
         if "cache_control" in x:
@@ -128,7 +140,7 @@ def adapt(data: dict, protocol: str, anchor: str, rules) -> tuple[dict | None, s
             history = [{"role": "user", "content": [{"type": "input_text", "text": history}]}]
         if not isinstance(history, list):
             return None, "no-input"
-        segs, consumed, _ = leading(history, "input_text", allow_type=True)
+        segs, consumed, _ = leading(history, ("input_text", "text"), allow_type=True)
         if segs is None:
             return None, "complex-system"
         if "instructions" in data:
@@ -148,7 +160,7 @@ def adapt(data: dict, protocol: str, anchor: str, rules) -> tuple[dict | None, s
             return None, "complex-system"
         system = data[keys[0]]
         if not isinstance(system, dict) or set(system) - {"role", "parts"} or (
-            "role" in system and system["role"] != "system"
+            "role" in system and system["role"] not in ("system", "user")
         ):
             return None, "complex-system"
         parts = system.get("parts")

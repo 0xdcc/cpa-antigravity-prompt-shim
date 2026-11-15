@@ -2,6 +2,7 @@
 Description=CPA Antigravity prompt shim (operator-side private relay)
 After=network.target cli-proxy-api.service
 Wants=cli-proxy-api.service
+X-AntigravityPromptShimManaged=true
 
 [Service]
 Type=simple

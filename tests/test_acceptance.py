@@ -297,7 +297,7 @@ class MockUpstreamHandler(BaseHTTPRequestHandler):
             return
 
         # 2. Anthropic Messages
-        if self.path == "/v1/messages":
+        if self.path in ("/v1/messages", "/antigravity/v1/messages"):
             text_out = (
                 "UNRELATED_NO_TOOL_OR_MARKER"
                 if unrelated_mode
@@ -453,9 +453,17 @@ class AcceptanceRunnerTests(unittest.TestCase):
             acceptance.validate_base_url("http://127.0.0.1:8327", is_live=True)
         self.assertIn("not in allowed live endpoints", str(ctx.exception))
 
-        # Valid default live url passes
+        # Valid default live urls pass (CPA 8328 and Sub2API 18083)
         clean = acceptance.validate_base_url("http://127.0.0.1:8328", is_live=True)
         self.assertEqual(clean, "http://127.0.0.1:8328")
+        clean_s2a = acceptance.validate_base_url("http://127.0.0.1:18083", is_live=True)
+        self.assertEqual(clean_s2a, "http://127.0.0.1:18083")
+        runner_s2a = acceptance.AcceptanceRunner(base_url=self.mock_base_url, api_key="test_key", antigravity_prefix=True)
+        self.assertEqual(runner_s2a.test_messages_basic().status, "PASS")
+        self.assertEqual(self.server.received_requests[-1]["path"], "/antigravity/v1/messages")
+        self.assertEqual(runner_s2a.test_native_basic().status, "PASS")
+        self.assertTrue(self.server.received_requests[-1]["path"].startswith("/antigravity/v1beta/models/"))
+        self.assertEqual(self.server.received_requests[-1]["headers"].get("x-goog-api-key") or self.server.received_requests[-1]["headers"].get("X-Goog-Api-Key"), "test_key")
 
         # Monkeypatched allowed live endpoint works for unit testing
         with patch.object(acceptance, "ALLOWED_LIVE_BASE_URLS", {self.mock_base_url}):

@@ -265,6 +265,60 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), '127.0.0.1')
 
+    def test_sub2api_route_aliases_gemini_user_role_and_staged_sub2api_install(self):
+        aliases = [
+            ('/chat/completions', {'model': 'gemini-x', 'messages': [{'role': 'system', 'content': 'RULE'}, {'role': 'user', 'content': 'hi'}]}),
+            ('/antigravity/v1/messages', {'model': 'gemini-x', 'system': [{'type': 'text', 'text': 'RULE', 'cache_control': {'type': 'ephemeral'}}], 'messages': [{'role': 'user', 'content': 'hi'}]}),
+            ('/responses', {'model': 'gemini-x', 'instructions': 'RULE', 'input': [{'role': 'developer', 'content': [{'type': 'text', 'text': 'DEV'}]}, {'role': 'user', 'content': [{'type': 'input_text', 'text': 'hi'}]}]}),
+            ('/antigravity/v1beta/models/gemini-x:generateContent', {'systemInstruction': {'role': 'user', 'parts': [{'text': 'RULE'}]}, 'contents': [{'role': 'user', 'parts': [{'text': 'hi'}]}]}),
+            ('/antigravity/v1beta/models/gemini-x:streamGenerateContent?alt=sse', {'systemInstruction': {'parts': [{'text': 'RULE'}]}, 'contents': [{'role': 'user', 'parts': [{'text': 'hi'}]}]}),
+        ]
+        for path, payload in aliases:
+            with self.subTest(path=path):
+                status, got, raw = self.request(path, payload)
+                self.assertEqual(status, 200)
+                self.assertNotEqual(got, raw)
+                self.assertIn('RULE', got.decode())
+                self.assertEqual(self.up.seen[0], path)
+        for bad in ('/antigravity/v1beta/models/gemini-x:countTokens', '/antigravity/v1beta/models/gemini%2Fx:generateContent'):
+            _, got, raw = self.request(bad, aliases[3][1])
+            self.assertEqual(got, raw)
+        stage_s2a = self.base / 'stage_s2a'
+        res = subprocess.run(
+            ['bash', str(ROOT / 'install.sh'), '--yes', '--sub2api', '--destdir', str(stage_s2a)],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(res.returncode, 0, res.stderr)
+        cfg_text = (stage_s2a / 'etc/sub2api-antigravity-prompt-shim/config.toml').read_text()
+        unit_text = (stage_s2a / 'etc/systemd/system/sub2api-antigravity-prompt-shim.service').read_text()
+        cpa_unit = (self.base / 'stage/etc/systemd/system/cpa-antigravity-prompt-shim.service').read_text()
+        self.assertIn('After=network.target cli-proxy-api.service', cpa_unit)
+        self.assertIn('Wants=cli-proxy-api.service', cpa_unit)
+        self.assertNotIn('cli-proxy-api.service', unit_text)
+        self.assertIn('X-AntigravityPromptShimManaged=true', unit_text)
+        self.assertIn('listen_port = 18083', cfg_text)
+        self.assertIn('url = "http://127.0.0.1:8081"', cfg_text)
+        self.assertIn('/etc/sub2api-antigravity-prompt-shim/mode', cfg_text)
+        self.assertIn('/opt/sub2api-antigravity-prompt-shim/shim.py --config /etc/sub2api-antigravity-prompt-shim/config.toml', unit_text)
+        self.assertIn('RuntimeDirectory=sub2api-antigravity-prompt-shim', unit_text)
+        for bad_name in ('bad/name', 'sshd', 'nginx'):
+            bad_svc = subprocess.run(['bash', str(ROOT / 'install.sh'), '--service-name', bad_name], capture_output=True, text=True)
+            self.assertEqual(bad_svc.returncode, 2)
+        unmanaged = stage_s2a / 'etc/systemd/system/foreign-antigravity-prompt-shim.service'
+        unmanaged.write_text('[Unit]\nDescription=Foreign unmanaged unit\n')
+        refuse = subprocess.run(
+            ['bash', str(ROOT / 'install.sh'), '--yes', '--service-name', 'foreign-antigravity-prompt-shim', '--destdir', str(stage_s2a)],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(refuse.returncode, 1)
+        sym_unit = stage_s2a / 'etc/systemd/system/symlink-antigravity-prompt-shim.service'
+        sym_unit.symlink_to(stage_s2a / 'etc/systemd/system/sub2api-antigravity-prompt-shim.service')
+        refuse_sym = subprocess.run(
+            ['bash', str(ROOT / 'install.sh'), '--yes', '--service-name', 'symlink-antigravity-prompt-shim', '--destdir', str(stage_s2a)],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(refuse_sym.returncode, 1)
+
 
 if __name__ == '__main__':
     unittest.main()

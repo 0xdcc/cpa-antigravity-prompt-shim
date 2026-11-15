@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Standard library acceptance runner for CPA Antigravity Prompt Shim and upstream CPA.
+"""Standard library acceptance runner for CPA & Sub2API Antigravity Prompt Shim.
 
 Ensures safe loopback testing, strict gating, request budgets, and desensitized reporting.
 """
@@ -22,7 +22,7 @@ from urllib.parse import urlsplit
 import urllib.error
 import urllib.request
 
-ALLOWED_LIVE_BASE_URLS: set[str] = {"http://127.0.0.1:8328"}
+ALLOWED_LIVE_BASE_URLS: set[str] = {"http://127.0.0.1:8328", "http://127.0.0.1:18083"}
 DEFAULT_MODEL: str = "gemini-3.8-flash-high"
 DEFAULT_MAX_REQUESTS: int = 16
 DEFAULT_TIMEOUT_SECONDS: float = 90.0
@@ -364,6 +364,7 @@ class AcceptanceRunner:
         fixtures_file: str | None = None,
         zwsp_fixture: bool = False,
         timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+        antigravity_prefix: bool = False,
     ):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
@@ -374,6 +375,7 @@ class AcceptanceRunner:
         self.fixtures_file = fixtures_file
         self.zwsp_fixture = zwsp_fixture
         self.timeout_seconds = timeout_seconds
+        self.antigravity_prefix = antigravity_prefix
         # Direct loopback opener with redirects disabled to prevent proxy/credential leakage
         self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirectHandler())
 
@@ -920,8 +922,9 @@ class AcceptanceRunner:
             "x-api-key": self.api_key,
             "anthropic-version": "2023-06-01",
         }
+        messages_path = "/antigravity/v1/messages" if self.antigravity_prefix else "/v1/messages"
         try:
-            status, data, latency, _ = self._execute_http("POST", "/v1/messages", payload=payload, headers=headers)
+            status, data, latency, _ = self._execute_http("POST", messages_path, payload=payload, headers=headers)
         except _RequestStoppedError as e:
             return TestResult("messages_basic", "messages", "STOPPED", latency_ms=0, error_category=str(e))
         except Exception as e:
@@ -993,7 +996,9 @@ class AcceptanceRunner:
 
     def test_native_basic(self) -> TestResult:
         """Gemini Native protocol: generateContent non-streaming."""
-        endpoint = f"/v1beta/models/{self.model}:generateContent"
+        prefix = "/antigravity" if self.antigravity_prefix else ""
+        endpoint = f"{prefix}/v1beta/models/{self.model}:generateContent"
+        headers = {"x-goog-api-key": self.api_key}
         payload = {
             "systemInstruction": {
                 "parts": [
@@ -1005,7 +1010,7 @@ class AcceptanceRunner:
             ],
         }
         try:
-            status, data, latency, _ = self._execute_http("POST", endpoint, payload=payload)
+            status, data, latency, _ = self._execute_http("POST", endpoint, payload=payload, headers=headers)
         except _RequestStoppedError as e:
             return TestResult("native_basic", "native", "STOPPED", latency_ms=0, error_category=str(e))
         except Exception as e:
@@ -1287,6 +1292,7 @@ def main() -> int:
     ap.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT_SECONDS, help=f"HTTP timeout in seconds (default: {DEFAULT_TIMEOUT_SECONDS})")
     ap.add_argument("--fixtures-file", help="Optional path to local fixtures file for fingerprint evaluation")
     ap.add_argument("--zwsp-fixture", action="store_true", help="Insert zero-width spaces into English words in fixture text")
+    ap.add_argument("--antigravity-prefix", action="store_true", help="Use Sub2API /antigravity/v1/messages and /antigravity/v1beta/models/* routes")
     ap.add_argument("--report", help="Absolute path to output JSON acceptance report")
 
     args = ap.parse_args()
@@ -1364,6 +1370,7 @@ def main() -> int:
         fixtures_file=args.fixtures_file,
         zwsp_fixture=args.zwsp_fixture,
         timeout_seconds=args.timeout,
+        antigravity_prefix=args.antigravity_prefix,
     )
 
     plan = build_test_plan(

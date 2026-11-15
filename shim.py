@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Private loopback-only CPA relay; rewrites Gemini Chat Completions only."""
+"""Private loopback-only CPA relay with conservative prompt adapters."""
 from __future__ import annotations
 
 import argparse
@@ -10,6 +10,7 @@ import os
 import re
 import socket
 import socketserver
+import sys
 import threading
 import time
 import tomllib
@@ -17,6 +18,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
+
+from adapters import adapt, route
 
 HOP_HEADERS = {"connection", "keep-alive", "proxy-connection", "transfer-encoding", "te", "trailer", "upgrade", "content-length", "host", "proxy-authorization", "proxy-authenticate"}
 DEFAULT_ANCHOR = (
@@ -73,9 +76,13 @@ class Config:
 
     def upstream(self) -> tuple[str, int, bool, str]:
         u = urlsplit(self.upstream_url)
+        try:
+            raw_port = u.port
+        except ValueError:
+            raise ValueError("invalid upstream port") from None
         if u.scheme not in ("http", "https") or u.hostname != "127.0.0.1" or u.username is not None or u.password is not None or u.query or u.fragment:
             raise ValueError("upstream must be an http(s) loopback URL without credentials/query/fragment")
-        port = u.port if u.port is not None else (443 if u.scheme == "https" else 80)
+        port = raw_port if raw_port is not None else (443 if u.scheme == "https" else 80)
         if not 1 <= port <= 65535:
             raise ValueError("invalid upstream port")
         return u.hostname, port, u.scheme == "https", u.path.rstrip("/")
@@ -85,61 +92,78 @@ class Runtime:
     def __init__(self, config_path: str):
         self.config_path = config_path
         self._lock = threading.RLock()
+        self._cache = {}
+        self._selectors = {}
+
+    def _load(self, kind: str, path: str, loader):
+        # Stat each access; never use stale valid data after invalid hot edits.
+        with self._lock:
+            stat = Path(path).stat()
+            signature = (stat.st_mtime_ns, stat.st_size, stat.st_ino)
+            key = (kind, path)
+            cached = self._cache.get(key)
+            if cached is not None and cached[0] == signature:
+                if isinstance(cached[1], Exception):
+                    raise ValueError("invalid cached runtime file")
+                return cached[1]
+            try:
+                value = loader(path)
+            except Exception as error:
+                self._cache[key] = (signature, error)
+                raise
+            self._cache[key] = (signature, value)
+            return value
 
     def config(self) -> Config:
-        # Small local file: parse each time so invalid hot edits fail closed.
-        with self._lock:
-            return Config.load(self.config_path)
+        return self._load("config", self.config_path, Config.load)
 
     def mode(self, c: Config | None = None) -> str:
         c = c or self.config()
-        value = Path(c.mode_file).read_text(encoding="utf-8").strip().lower()
-        if value not in ("wrap", "passthrough"):
-            raise ValueError("mode must be wrap or passthrough")
-        return value
+        def load(path):
+            value = Path(path).read_text(encoding="utf-8").strip().lower()
+            if value not in ("wrap", "passthrough"):
+                raise ValueError("mode must be wrap or passthrough")
+            return value
+        return self._load("mode", c.mode_file, load)
 
     def rules(self, c: Config) -> list[tuple[re.Pattern, str]]:
         if not c.rules_file:
             return []
-        raw = json.loads(Path(c.rules_file).read_text(encoding="utf-8"))
-        if not isinstance(raw, list) or any(not isinstance(x, dict) or set(x) - {"pattern", "replacement"} or not isinstance(x.get("pattern"), str) or not isinstance(x.get("replacement", ""), str) for x in raw):
-            raise ValueError("invalid rules")
-        return [(re.compile(x["pattern"]), x.get("replacement", "")) for x in raw]
+        def load(path):
+            raw = json.loads(Path(path).read_text(encoding="utf-8"))
+            if not isinstance(raw, list) or any(not isinstance(x, dict) or set(x) - {"pattern", "replacement"} or not isinstance(x.get("pattern"), str) or not isinstance(x.get("replacement", ""), str) for x in raw):
+                raise ValueError("invalid rules")
+            rules = [(re.compile(x["pattern"]), x.get("replacement", "")) for x in raw]
+            for pattern, replacement in rules:
+                pattern.sub(replacement, "")
+            return rules
+        return self._load("rules", c.rules_file, load)
 
-    def transform(self, body: bytes, c: Config | None = None) -> tuple[bytes | None, str]:
+    def transform(self, body: bytes, c: Config | None = None, path: str = "/v1/chat/completions") -> tuple[bytes | None, str]:
         c = c or self.config()
         mode, rules = self.mode(c), self.rules(c)
         if mode == "passthrough":
             return None, "passthrough-mode"
+        protocol, path_model = route(path)
+        if protocol == "unsupported":
+            return None, "unsupported-path"
         try:
             d = json.loads(body)
         except (ValueError, UnicodeError):
             return None, "non-json"
-        if not isinstance(d, dict) or not isinstance(d.get("model"), str) or not re.search(c.model_regex, d["model"]):
+        if not isinstance(d, dict):
             return None, "model-not-matched"
-        messages = d.get("messages")
-        if not isinstance(messages, list):
-            return None, "no-messages"
-        texts = []
-        for item in messages:
-            if not isinstance(item, dict) or item.get("role") not in ("system", "developer"):
-                break
-            if set(item) - {"role", "content"}:
-                return None, "complex-system"
-            content = item.get("content")
-            if isinstance(content, str):
-                texts.append(content)
-            elif isinstance(content, list) and content and all(isinstance(x, dict) and set(x) == {"type", "text"} and x["type"] == "text" and isinstance(x["text"], str) for x in content):
-                texts.append("\n".join(x["text"] for x in content))
-            else:
-                return None, "complex-system"
-        if not texts:
-            return None, "no-leading-system"
-        text = "\n\n".join(texts)
-        for pattern, replacement in rules:
-            text = pattern.sub(replacement, text)
-        d["messages"] = [{"role": "system", "content": c.anchor}, {"role": "user", "content": "<developer_instructions>\n" + text + "\n</developer_instructions>"}] + messages[len(texts):]
-        return json.dumps(d, ensure_ascii=False, separators=(",", ":")).encode(), "wrapped"
+        model = path_model if path_model is not None else d.get("model")
+        with self._lock:
+            if c.model_regex not in self._selectors:
+                self._selectors = {c.model_regex: re.compile(c.model_regex)}
+            selector = self._selectors[c.model_regex]
+        if not isinstance(model, str) or not selector.search(model):
+            return None, "model-not-matched"
+        result, reason = adapt(d, protocol, c.anchor, rules)
+        if result is None:
+            return None, reason
+        return json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode(), reason
 
 
 class RequestError(Exception):
@@ -197,6 +221,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if self.command in ("GET", "HEAD") and urlsplit(self.path).path in ("/healthz", "/readyz"):
             try:
                 c = self.runtime.config()
+                self.runtime.rules(c)
                 self.send_json(200, {"status": "ok", "mode": self.runtime.mode(c)})
             except Exception:
                 self.send_json(503, {"status": "error"})
@@ -219,9 +244,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 raise RequestError(400)
             self.connection.settimeout(c.request_timeout_seconds)
             body, info = self.read_body(c), "pass"
-            if self.command == "POST" and urlsplit(self.path).path == "/v1/chat/completions" and body and not self.headers.get("Content-Encoding"):
+            if self.command == "POST" and body and not self.headers.get("Content-Encoding"):
                 try:
-                    new_body, info = self.runtime.transform(body, c)
+                    new_body, info = self.runtime.transform(body, c, self.path)
                 except Exception:
                     raise RequestError(503)
                 if new_body is not None:
@@ -283,9 +308,13 @@ def main() -> int:
     ap.add_argument("--config", default=os.environ.get("CPA_SHIM_CONFIG", "/etc/cpa-antigravity-prompt-shim/config.toml"))
     args = ap.parse_args()
     runtime = Runtime(args.config)
-    c = runtime.config()
-    runtime.mode(c)
-    runtime.rules(c)
+    try:
+        c = runtime.config()
+        runtime.mode(c)
+        runtime.rules(c)
+    except Exception:
+        print("invalid startup configuration", file=sys.stderr, flush=True)
+        return 1
     with Server((c.listen_host, c.listen_port), Handler) as server:
         server.runtime = runtime
         print("listening on private loopback", flush=True)

@@ -13,8 +13,13 @@ u = urlsplit(a.url)
 if u.scheme != 'http' or u.hostname != '127.0.0.1' or u.username or u.password or u.query or u.fragment or u.path not in ('', '/', '/healthz', '/readyz'):
     p.error('use a loopback base URL or health URL')
 url = a.url.rstrip('/') if u.path in ('/healthz', '/readyz') else a.url.rstrip('/') + '/healthz'
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise urllib.error.HTTPError(req.full_url, code, "redirects disabled", headers, fp)
+
+
 try:
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
     with opener.open(url, timeout=5) as r:
         d = json.load(r)
     print(json.dumps(d))

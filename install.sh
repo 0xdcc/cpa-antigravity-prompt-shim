@@ -27,6 +27,7 @@ ETC="$DESTDIR/etc/cpa-antigravity-prompt-shim"
 UNIT="$DESTDIR/etc/systemd/system/cpa-antigravity-prompt-shim.service"
 install -d -m 0755 "$DESTDIR$PREFIX" "$ETC" "$(dirname -- "$UNIT")"
 install -m 0755 "$SOURCE/shim.py" "$SOURCE/healthcheck.py" "$DESTDIR$PREFIX/"
+install -m 0644 "$SOURCE/adapters.py" "$DESTDIR$PREFIX/"
 # Generate the unit without invoking shell interpolation in the service command.
 python3 - "$SOURCE/cpa-antigravity-prompt-shim.service" "$UNIT" "$PREFIX" <<'PY'
 import pathlib, sys
@@ -39,5 +40,13 @@ if [[ ! -e "$ETC/mode" ]]; then printf 'wrap\n' > "$ETC/mode"; chmod 0600 "$ETC/
 if [[ -n $DESTDIR ]]; then echo 'Staged only; no service or healthcheck was run.'; exit 0; fi
 systemctl daemon-reload
 systemctl enable --now cpa-antigravity-prompt-shim.service
-"$PREFIX/healthcheck.py" --url http://127.0.0.1:8327
+HEALTH_URL=$(/usr/bin/python3 - "$ETC/config.toml" "$PREFIX" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[2])
+from shim import Config
+config = Config.load(sys.argv[1])
+print(f'http://{config.listen_host}:{config.listen_port}')
+PY
+)
+/usr/bin/python3 "$PREFIX/healthcheck.py" --url "$HEALTH_URL"
 printf '%s\n' 'Installed. CPA and channel routing were not changed.'

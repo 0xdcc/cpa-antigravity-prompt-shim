@@ -4,6 +4,9 @@ listen_host = "127.0.0.1"
 listen_port = 8327
 mode_file = "/etc/cpa-antigravity-prompt-shim/mode"
 rules_file = ""
+# Model names do NOT identify their provider. Never default-match all Claude/GPT.
+# Explicit operator opt-in for configured CPA aliases, e.g.:
+# model_regex = "^(gemini-|antigravity-)"
 model_regex = "^gemini-"
 log_level = "info"
 max_body_bytes = 16777216

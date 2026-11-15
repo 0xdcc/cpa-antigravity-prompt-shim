@@ -18,7 +18,7 @@ systemctl disable --now cpa-antigravity-prompt-shim.service
 rm -f /etc/systemd/system/cpa-antigravity-prompt-shim.service
 systemctl daemon-reload
 # Do not recursively remove arbitrary custom prefixes or unrelated config.
-rm -f -- "$PREFIX/shim.py" "$PREFIX/healthcheck.py"
+rm -f -- "$PREFIX/shim.py" "$PREFIX/adapters.py" "$PREFIX/healthcheck.py"
 rmdir -- "$PREFIX" 2>/dev/null || true
 if [[ ${KEEP_CONFIG:-0} != 1 ]]; then rm -f -- "$ETC/config.toml" "$ETC/mode"; rmdir -- "$ETC" 2>/dev/null || true; fi
 printf '%s\n' 'Removed shim. Restore the relay/channel upstream separately if it was changed.'

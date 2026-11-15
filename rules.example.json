@@ -2,8 +2,10 @@
   {"pattern": "You are Hermes Agent, built by [^.\\n]*\\.[ \\t]?", "replacement": ""},
   {"pattern": "(?m)^For help with Hermes Agent itself[^\\n]*(?:\\n|$)", "replacement": ""},
   {"pattern": "Hermes delivers their message as a standalone user message", "replacement": "The client delivers their message as a standalone user message"},
+  {"pattern": "(?m)^#+ *Mid-turn user steering[^\\n]*(?:\\n|$)", "replacement": "# User updates\\n"},
+  {"pattern": "Mid-turn, the user can", "replacement": "During execution, the user can"},
   {"pattern": "Be direct: match the length of your reply", "replacement": "Match the length of your reply"},
-  {"pattern": "(?m)^#+ *Google model operational directives", "replacement": "# Operational notes"},
+  {"pattern": "#+ *Google model operational directives", "replacement": "# Operational notes"},
   {"pattern": "<!-- *End Hermes runtime environment *-->", "replacement": ""},
-  {"pattern": "(?m)^#+ *Hermes runtime environment", "replacement": "# Runtime environment"}
+  {"pattern": "#+ *Hermes runtime environment", "replacement": "# Runtime environment"}
 ]

@@ -14,6 +14,8 @@ NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=read-only
+RuntimeDirectory=cpa-antigravity-prompt-shim
+RuntimeDirectoryMode=0700
 ReadWritePaths=/run/cpa-antigravity-prompt-shim
 MemoryMax=512M
 # Keep the operator relay on loopback. Do not add a public ListenStream.

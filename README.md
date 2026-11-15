@@ -6,7 +6,7 @@ CPA Antigravity 上游可能对 `systemInstruction` 中的某些 Agent harness �
 
 ## 设计边界
 
-- 只改 `gemini-*` 的 `/v1/chat/completions`；其他模型、路径和没有 leading system 的请求透明转发。
+- 只改 `gemini-*` 的精确 `/v1/chat/completions`；其他模型、路径和没有 leading system 的请求原样转发（不支持改写 Messages、Responses 或 GPT-OSS）。
 - 保留 tools、历史消息、SSE 和流式响应；不处理 OAuth，不做多账号轮换，不替换 CPA，也不适配 Sub2API。
 - 默认只监听 `127.0.0.1`，默认上游 `127.0.0.1:8317`；不写请求体、Authorization 或 token 日志。
 - 这是降低特定 system-prompt 指纹误报的工程方案，不是 Google 风控绕过、封号保证或配额增加方案。
@@ -35,7 +35,7 @@ sudo systemctl daemon-reload && sudo systemctl enable --now cpa-antigravity-prom
 New API channel (Gemini) -> http://127.0.0.1:8327 -> CPA http://127.0.0.1:8317
 ```
 
-只把需要保护的 Gemini 渠道 `base_url` 改到 `8327`。其他渠道保持直连 CPA。若 New API 与 sidecar 不同主机，使用受控内网地址和显式 API key，并先自行审查/改造 upstream guard；默认实现刻意拒绝非本机上游。
+只把需要改写的 Gemini 渠道 `base_url` 改到 `8327`。其他渠道保持直连 CPA。本实现仅允许 `127.0.0.1` 监听和上游，不支持跨机或公网直连，也不另设会覆盖 CPA 鉴权的 sidecar API key；原有 Authorization / X-Api-Key 继续转发 CPA。
 
 ### 客户端直接接入
 
@@ -64,12 +64,22 @@ python3 -m py_compile shim.py healthcheck.py
 python3 -m unittest discover -s tests -v
 ```
 
-生产接入前，运营方应使用自己的真实工具请求验证：最小请求、SSE、长上下文、重复 prompt cache、模型权限、429/502 统计及回滚。
+本地 HTTP 夹具覆盖首帧流式、透传、错误和 staged 安装，不等于真实 CPA/Gemini 端到端验证；本仓库当前修订未连接生产模型验证。生产接入前，运营方应使用自己的真实工具请求验证：最小请求、SSE、长上下文、重复 prompt cache、模型权限、429/502 统计及回滚。
+
+## 传输与配置限制
+
+- 客户端及上游连接均按请求关闭，不支持连接复用、WebSocket 或升级协议。
+- 请求必须使用 Content-Length 或无正文；chunked 请求明确返回 501（与 Content-Length 混用返回 400），不是静默错误解析。上游 chunked/SSE 响应可流式转发。
+- 请求体默认上限 16 MiB，超限 413；正文读取超时默认 30 秒，上游读取超时默认 900 秒。初始 HTTP 头读取上限 30 秒；超时是单次 socket I/O 限制，不是全请求总时限。
+- 配置、mode 和规则文件缺失/无效会在启动拒绝，热修改无效返回 503；不要使用旧版 `[security]` 段。纯文本 leading system/developer 才改写，混合非文本或附加未知字段的 leading 消息整份请求逐字节透传，避免丢失内容。Messages、Responses 和 GPT-OSS 没有改写支持。
+- `/healthz`、`/readyz` 仅报告本地配置和 mode 可读，不探测 CPA、凭据、模型或真实请求可用性。
+- 安全演练安装可用 `./install.sh --yes --prefix /opt/custom-shim --destdir /absolute/staging/root`；不会调用 systemctl/healthcheck。加 `--dry-run` 则不写文件。live 安装保留现存配置；改过监听端口时请自行使用对应地址执行 healthcheck。
+- 自定义安装前缀需在卸载时也传入 `--prefix`。安装脚本不做生产端到端验收。
 
 ## English
 
-This is an operator-deployed transparent sidecar for CPA-backed relay services. It moves only leading system/developer instructions of Gemini OpenAI Chat Completions into a first user `developer_instructions` block and leaves a neutral system anchor. End users keep the same API and do not install anything. It does not handle OAuth, account pools, billing, Sub2API, or Google policy enforcement. Keep CPA's existing sensitive-pattern replacement as defense in depth. Default binding is loopback; review every deployment before exposing it behind a relay.
+This is an operator-deployed transparent sidecar for CPA-backed relay services. It moves only leading system/developer instructions of Gemini OpenAI Chat Completions into a first user `developer_instructions` block and leaves a neutral system anchor. End users keep the same API and do not install anything. It does not handle OAuth, account pools, billing, Sub2API, or Google policy enforcement. Keep CPA's existing sensitive-pattern replacement as defense in depth. Only 127.0.0.1 binding/upstream are supported; this is not a public-facing HTTP server. Local fake-upstream tests do not establish real CPA/model compatibility.
 
 ## License
 
-Apache-2.0. See `LICENSE` and `SECURITY.md`.
+MIT. See `LICENSE` and `SECURITY.md`.

@@ -1,23 +1,43 @@
 #!/usr/bin/env bash
 set -euo pipefail
 PREFIX=/opt/cpa-antigravity-prompt-shim
-ETC=/etc/cpa-antigravity-prompt-shim
-UNIT=/etc/systemd/system/cpa-antigravity-prompt-shim.service
+DESTDIR=
 YES=0
-for arg in "$@"; do case "$arg" in --yes) YES=1;; --prefix) shift; PREFIX="$1";; --help|-h) printf '%s\n' 'Usage: sudo ./install.sh [--yes] [--prefix PATH]'; exit 0;; esac; done
-if [[ $EUID -ne 0 ]]; then echo 'run as root'; exit 1; fi
-if [[ $YES -ne 1 ]]; then
-  echo "This installs an operator-side private relay at $PREFIX and $ETC."
-  echo 'It does not modify CPA, New API, OAuth files, or user home configuration.'
-  read -r -p 'Type INSTALL to continue: ' answer
-  [[ $answer == INSTALL ]] || { echo 'cancelled'; exit 2; }
+DRY_RUN=0
+while (($#)); do
+  case "$1" in
+    --yes) YES=1; shift;;
+    --prefix|--destdir) [[ $# -ge 2 ]] || { echo 'missing option value' >&2; exit 2; }; key=$1; value=$2; shift 2; if [[ $key == --prefix ]]; then PREFIX=$value; else DESTDIR=$value; fi;;
+    --dry-run) DRY_RUN=1; shift;;
+    --help|-h) printf '%s\n' 'Usage: ./install.sh [--yes] [--prefix /absolute/path] [--destdir /staging/root] [--dry-run]'; exit 0;;
+    *) echo 'unknown option' >&2; exit 2;;
+  esac
+done
+# Restrict unit-substitution input to simple absolute paths.
+[[ $PREFIX =~ ^/[-a-zA-Z0-9_./]+$ && $PREFIX != / && $PREFIX != *..* ]] || { echo 'invalid prefix' >&2; exit 2; }
+[[ -z $DESTDIR || ( $DESTDIR == /* && $DESTDIR != / && $DESTDIR != *..* ) ]] || { echo 'invalid destdir' >&2; exit 2; }
+SOURCE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+if ((DRY_RUN)); then printf 'prefix=%s destdir=%s; no writes, no systemctl\n' "$PREFIX" "${DESTDIR:-/}"; exit 0; fi
+if [[ -z $DESTDIR && $EUID -ne 0 ]]; then echo 'run as root for live installation' >&2; exit 1; fi
+if ((YES != 1)); then
+  read -r -p 'Type INSTALL to install this private loopback relay: ' answer
+  [[ $answer == INSTALL ]] || exit 2
 fi
-install -d -m 0755 "$PREFIX" "$ETC"
-install -m 0755 shim.py healthcheck.py "$PREFIX/"
-install -m 0644 cpa-antigravity-prompt-shim.service "$ETC/../systemd/system/" 2>/dev/null || install -m 0644 cpa-antigravity-prompt-shim.service /etc/systemd/system/
-if [[ ! -e "$ETC/config.toml" ]]; then install -m 0600 config.example.toml "$ETC/config.toml"; fi
+ETC="$DESTDIR/etc/cpa-antigravity-prompt-shim"
+UNIT="$DESTDIR/etc/systemd/system/cpa-antigravity-prompt-shim.service"
+install -d -m 0755 "$DESTDIR$PREFIX" "$ETC" "$(dirname -- "$UNIT")"
+install -m 0755 "$SOURCE/shim.py" "$SOURCE/healthcheck.py" "$DESTDIR$PREFIX/"
+# Generate the unit without invoking shell interpolation in the service command.
+python3 - "$SOURCE/cpa-antigravity-prompt-shim.service" "$UNIT" "$PREFIX" <<'PY'
+import pathlib, sys
+source, target, prefix = sys.argv[1:]
+pathlib.Path(target).write_text(pathlib.Path(source).read_text().replace('/opt/cpa-antigravity-prompt-shim', prefix))
+PY
+chmod 0644 "$UNIT"
+if [[ ! -e "$ETC/config.toml" ]]; then install -m 0600 "$SOURCE/config.example.toml" "$ETC/config.toml"; fi
 if [[ ! -e "$ETC/mode" ]]; then printf 'wrap\n' > "$ETC/mode"; chmod 0600 "$ETC/mode"; fi
+if [[ -n $DESTDIR ]]; then echo 'Staged only; no service or healthcheck was run.'; exit 0; fi
 systemctl daemon-reload
 systemctl enable --now cpa-antigravity-prompt-shim.service
-"$PREFIX/healthcheck.py" --url http://127.0.0.1:8327/healthz
-printf '%s\n' 'Installed. New API/channel routing is intentionally not changed by this script.'
+"$PREFIX/healthcheck.py" --url http://127.0.0.1:8327
+printf '%s\n' 'Installed. CPA and channel routing were not changed.'

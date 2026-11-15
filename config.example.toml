@@ -1,19 +1,14 @@
-# Operator-side configuration. Copy to /etc/cpa-antigravity-prompt-shim/config.toml.
+# Private, same-machine deployment only. Python 3.11+.
 [relay]
 listen_host = "127.0.0.1"
 listen_port = 8327
 mode_file = "/etc/cpa-antigravity-prompt-shim/mode"
-# Optional JSON rule file. Leave empty to rely on system->user wrapping only.
 rules_file = ""
 model_regex = "^gemini-"
 log_level = "info"
+max_body_bytes = 16777216
+request_timeout_seconds = 30
 
 [upstream]
 url = "http://127.0.0.1:8317"
 timeout_seconds = 900
-
-[security]
-# Required if listen_host is not loopback. Keep this sidecar private for an
-# operator-only deployment; do not expose it as an end-user API.
-client_api_key = ""
-allow_nonlocal_without_key = false

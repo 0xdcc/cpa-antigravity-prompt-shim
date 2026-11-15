@@ -4,9 +4,8 @@
 
 ## 默认安全边界
 
-- 默认只监听 loopback；不要把 8327 暴露公网。
-- 默认只允许 CPA 同机 loopback 上游，避免把 Authorization、请求体和模型流量误转到未知主机。
-- 不记录请求正文、Authorization、Cookie、OAuth、token 或响应内容；普通访问日志只含方法、路径、状态、耗时和转换类别。
+- 仅支持 `127.0.0.1` 监听及上游；拒绝公网、域名和含 userinfo/query/fragment 的上游 URL。不实现额外公网鉴权，CPA 的原始鉴权头照常透传。
+- 不记录 URI（包括路径及 query）、model、请求正文、Authorization、Cookie、OAuth、token 或响应内容；访问日志仅含状态、耗时和固定转换类别。
 - systemd 模板启用 `NoNewPrivileges`、`PrivateTmp`、`ProtectSystem` 与只读 Home。
 - sidecar 不读取或管理 OAuth，不看 CPA credential 目录，不实现账号池和出口切换。
 

@@ -1,0 +1,22 @@
+[Unit]
+Description=CPA Antigravity prompt shim (operator-side private relay)
+After=network.target cli-proxy-api.service
+Wants=cli-proxy-api.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/bin/python3 /opt/cpa-antigravity-prompt-shim/shim.py --config /etc/cpa-antigravity-prompt-shim/config.toml
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/run/cpa-antigravity-prompt-shim
+MemoryMax=512M
+# Keep the operator relay on loopback. Do not add a public ListenStream.
+
+[Install]
+WantedBy=multi-user.target

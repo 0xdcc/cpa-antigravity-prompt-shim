@@ -12,7 +12,18 @@ NATIVE_PATH = re.compile(
 
 
 def route(target: str) -> tuple[str, str | None]:
-    path = urlsplit(target).path
+    raw_path = urlsplit(target).path
+    # Upstream Go routers (CPA / Sub2API on Gin) match on the once-decoded URL
+    # path, so "/v1/chat/complet%69ons" and "/v1/chat%2Fcompletions" still hit
+    # chat completions there. Route on the same single decode, otherwise an
+    # encoded alias silently bypasses the rewrite. Malformed escapes are never
+    # rewritten; the raw target is always forwarded unchanged.
+    if re.search(r"%(?![0-9a-fA-F]{2})", raw_path):
+        return "unsupported", None
+    try:
+        path = unquote(raw_path, errors="strict")
+    except UnicodeError:
+        return "unsupported", None
     protocols = {
         "/v1/chat/completions": "chat",
         "/chat/completions": "chat",
@@ -25,15 +36,9 @@ def route(target: str) -> tuple[str, str | None]:
         return protocols[path], None
     match = NATIVE_PATH.fullmatch(path)
     if match:
-        token = match[1]
-        if re.search(r"%(?![0-9a-fA-F]{2})", token):
-            return "unsupported", None
-        try:
-            model = unquote(token, errors="strict")
-        except UnicodeError:
-            return "unsupported", None
-        # Encoded slashes, action delimiters, double encoding and controls cannot
-        # change model/path interpretation. The raw target is still forwarded.
+        model = match[1]
+        # Encoded slashes, double encoding and controls cannot change model/path
+        # interpretation: anything outside a plain model token is not rewritten.
         if re.fullmatch(r"[A-Za-z0-9_.~-]+", model):
             return "gemini", model
     return "unsupported", None

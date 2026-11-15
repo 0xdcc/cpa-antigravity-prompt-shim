@@ -319,6 +319,35 @@ class ProtocolTests(unittest.TestCase):
         )
         self.assertEqual(refuse_sym.returncode, 1)
 
+    def test_encoded_path_aliases_cannot_bypass_rewrite(self):
+        # Gin routes on the once-decoded path; the shim must route the same way.
+        payload = {'model': 'gemini-x', 'messages': [{'role': 'system', 'content': 'RULE'}, {'role': 'user', 'content': 'hi'}]}
+        for alias in ('/v1/chat/complet%69ons', '/v1/chat%2Fcompletions', '/%761/chat/completions'):
+            with self.subTest(alias=alias):
+                self.assertEqual(route(alias)[0], 'chat')
+                status, got, raw = self.request(alias, payload)
+                self.assertEqual(status, 200)
+                self.assertNotEqual(got, raw)
+                self.assertIn('<developer_instructions>', got.decode())
+                self.assertEqual(self.up.seen[0], alias)  # raw target still forwarded verbatim
+        self.assertEqual(route('/antigravity/v1beta/models/gemini-x%3AgenerateContent'), ('gemini', 'gemini-x'))
+        for bad in ('/v1/chat/completions%zz', '/v1/chat/completions%', '/v1/chat/completions%ff', '/v1/chat/completions/', '/v1/chat/completions%2F', '/antigravity/v1beta/models/gemini%252Fx:generateContent'):
+            with self.subTest(bad=bad):
+                self.assertEqual(route(bad)[0], 'unsupported')
+
+    def test_hostile_but_valid_json_passes_through_instead_of_503(self):
+        lone = b'{"model":"gemini-x","messages":[{"role":"system","content":"RULE"},{"role":"user","content":"cut emoji \\ud83d"}]}'
+        status, got, raw = self.request('/v1/chat/completions', lone)
+        self.assertEqual(status, 200)
+        self.assertNotEqual(got, raw)
+        decoded = json.loads(got)
+        self.assertEqual(decoded['messages'][1]['content'], '<developer_instructions>\nRULE\n</developer_instructions>')
+        self.assertEqual(decoded['messages'][2]['content'], 'cut emoji \ud83d')
+        deep = b'{"model":"gemini-x","messages":[{"role":"system","content":"S"},{"role":"user","content":"u"}],"x":' + b'[' * 200000 + b']' * 200000 + b'}'
+        status, got, raw = self.request('/v1/chat/completions', deep)
+        self.assertEqual(status, 200)
+        self.assertEqual(got, raw)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Security review fixes:
+  - Route on the once-decoded URL path (same as Gin in CPA / Sub2API), so percent-encoded aliases such as `/v1/chat/complet%69ons` or `/v1/chat%2Fcompletions` can no longer silently bypass the rewrite; malformed escapes stay untouched and the raw target is still forwarded verbatim.
+  - Valid JSON carrying lone UTF-16 surrogate escapes (e.g. truncated emoji from JS clients) is now re-encoded safely instead of failing the request with 503.
+  - Pathologically deep JSON (`RecursionError`) now falls back to byte-exact pass-through instead of returning 503.
+
 - Unified **CLIProxyAPI (CPA)** and **Sub2API** support in a single operator-side sidecar repository:
   - Added Sub2API route aliases (`/chat/completions`, `/responses`, `/antigravity/v1/messages`, and `/antigravity/v1beta/models/<model>:<action>`).
   - Accepted `"text"` blocks alongside `"input_text"` in leading Responses `system`/`developer` items and `role: "user"` alongside `"system"` in Gemini `systemInstruction` for Sub2API compatibility.

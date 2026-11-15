@@ -150,7 +150,7 @@ class Runtime:
             return None, "unsupported-path"
         try:
             d = json.loads(body)
-        except (ValueError, UnicodeError):
+        except (ValueError, UnicodeError, RecursionError):
             return None, "non-json"
         if not isinstance(d, dict):
             return None, "model-not-matched"
@@ -161,10 +161,22 @@ class Runtime:
             selector = self._selectors[c.model_regex]
         if not isinstance(model, str) or not selector.search(model):
             return None, "model-not-matched"
-        result, reason = adapt(d, protocol, c.anchor, rules)
+        try:
+            result, reason = adapt(d, protocol, c.anchor, rules)
+        except RecursionError:
+            return None, "too-deep"
         if result is None:
             return None, reason
-        return json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode(), reason
+        try:
+            text = json.dumps(result, ensure_ascii=False, separators=(",", ":"))
+        except RecursionError:
+            return None, "too-deep"
+        try:
+            return text.encode("utf-8"), reason
+        except UnicodeEncodeError:
+            # Valid JSON may carry lone surrogate escapes (e.g. a JS client that
+            # truncated an emoji). Keep them as \\uXXXX escapes instead of failing.
+            return json.dumps(result, ensure_ascii=True, separators=(",", ":")).encode("ascii"), reason
 
 
 class RequestError(Exception):
